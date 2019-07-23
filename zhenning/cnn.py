@@ -1,6 +1,35 @@
-#CNN models
-#Bug: load model -- save a model or class object
 
+# CNN model + binary_model/simply model
+# Zhenning Yang
+# Last modified: 07/23/2019
+
+'''
+Update Note:
+    binary_model:
+        1. test_df
+        2. pre_trained_EM
+        4. infor() --- same as the one in cnn_model
+        3. small changes on some default parameters (num_words, topk)
+
+
+TODO:
+    1. test all the new funtions
+    2. add LSTM layer to binary_model -x
+    3. re-adjust the nn struture for cnn_model
+
+
+
+PS:
+    1. might need cite the source when using crawl_embeddings
+'''
+
+#
+#
+#
+
+##########################################################################
+
+import io
 
 import numpy as np
 import pandas as pd
@@ -42,15 +71,27 @@ class cnn_model:
 
     def __init__(self, df=None, text=None, label=None, test_split=0.10, lr=0.005,
                  num_words=10000, maxlen='maxlen', embedding_dim=100, dense_nodes=None,
-                 filter_num=128, filter_size=5, test_df=None, tb_dir=None, opt='adam'):
+                 filter_num=128, filter_size=5, test_df=None, tb_dir=None, opt='adam',
+                 pre_trained_EM=None, lstm=False):
+        '''
+        num_words: is the max limit of words
+        test_df: expect to be a list. Ex. [df, text_label, code_label]
+        if tb_dir: is not none, will create a dir
+        pre_trained_EM: pass in a dict of word embeddings
+        embedding_dim: if pass in a pre trained EM, embedding_dim might needs to be reset
+        '''
 
         if isinstance(df, pd.DataFrame) and text!=None and label!=None:
+
+            self.version = '3.0'
 
             self.df = df
             self.text = text #column name for text
             self.label = label #column name for label
             self.test_split = test_split
             self.classes = np.unique(df[label].values)
+
+            pre_train = False
 
             self.opt = opt
 
@@ -103,8 +144,10 @@ class cnn_model:
                 self.X_train = self.tokenizer.texts_to_sequences(self.sentences_train)
                 self.X_test = self.tokenizer.texts_to_sequences(self.sentences_test)
 
-            vocab_size = len(self.tokenizer.word_index) + 1
+            self.vocab_size = len(self.tokenizer.word_index) + 1
 
+            # setting max length of each texts
+            # then setting all text data to equal length
             maxlen_op = ['maxlen','mid','mean']
             #print(type(maxlen))
             if (type(maxlen) == int) or (type(maxlen) == float):
@@ -127,6 +170,27 @@ class cnn_model:
 
             self.X_train = pad_sequences(self.X_train, padding='post', maxlen=self.maxlen)
             self.X_test = pad_sequences(self.X_test, padding='post', maxlen=self.maxlen)
+
+            # pre trained embeddings
+            if isinstance(pre_trained_EM, dict):
+                # over write vocab_size
+                # set pre_train = True
+                NB_WORDS = len(pre_trained_EM)
+                self.vocab_size = NB_WORDS
+                pre_train = True
+
+                missing_w = 0
+                emb_matrix = np.zeros((NB_WORDS, embedding_dim))
+                for w, i in self.tokenizer.word_index.items():
+                    if i < NB_WORDS:
+                        vect = pre_trained_EM.get(w)
+                        if vect is not None:
+                            emb_matrix[i] = vect
+                        else:
+                            missing_w += 1
+                    else:
+                        break
+
 
             '''
             Hyperparameter
@@ -151,17 +215,33 @@ class cnn_model:
                 self.dense_nodes = dense_nodes
 
             model = Sequential()
-            model.add(layers.Embedding(vocab_size, self.embedding_dim, input_length=self.maxlen))
+            if pre_train:
+                model.add(layers.Embedding(self.vocab_size, self.embedding_dim, input_length=self.maxlen, trainable=False))
+                model.layers[0].set_weights([emb_matrix])
+            else:
+                model.add(layers.Embedding(self.vocab_size, self.embedding_dim, input_length=self.maxlen))
+
             model.add(layers.Conv1D(filter_num, filter_size, activation='relu'))
-            model.add(layers.GlobalMaxPooling1D())
-            model.add(layers.Dense(self.dense_nodes, activation='relu'))
-            #test with Dropout
-            #model.add(Dropout(0.2))
+            #model.add(layers.GlobalMaxPooling1D())
+            model.add(layers.MaxPooling1D())
+            model.add(layers.Dropout(0.5))
+
+            if lstm:
+                #dropout=0.2, recurrent_dropout=0.2
+                model.add(layers.LSTM(self.dense_nodes, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))
+                model.add(Flatten())
+            else:
+                model.add(layers.Conv1D(filter_num, filter_size, activation='relu'))
+                model.add(layers.MaxPooling1D())
+                model.add(layers.Dropout(0.5))
+                model.add(Flatten())
+                model.add(layers.Dense(self.dense_nodes, activation='relu'))
+
             model.add(layers.Dense(self.output_num, activation='softmax'))
 
+            # optimizers
             sgd = SGD(lr=self.lr, momentum=0.9, decay=0.0, nesterov=False)
             adam = Adam(lr=self.lr, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
-
             if self.opt == 'sgd':
                 model.compile(optimizer=sgd, loss='categorical_crossentropy', metrics=['accuracy'])
             else:
@@ -176,6 +256,8 @@ class cnn_model:
     def train(self, epochs=5, verbose=1, shuffle=True, batch_size=100, tb_name=time()):
 
         '''
+        tb_name is file name for each model which will be displayed in the graph
+
         self.epochs = epochs
         self.verbose = verbose
         self.shuffle = shuffle
@@ -231,21 +313,6 @@ class cnn_model:
         print("model saved:  {}".format(name))
 
 
-    def load_pkl(self, name):
-        print("---------------------")
-        print("loading")
-        try:
-            with open(name, 'rb') as obj:
-                x = pickle.load(obj)
-
-            print("---------------------")
-            print("{} load".format(name))
-            return x
-        except:
-            print("Model not found")
-
-
-
     def predict(self, text):
         text = self.tokenizer.texts_to_sequences(text)
         text = pad_sequences(text, padding='post', maxlen=self.maxlen)
@@ -285,10 +352,10 @@ class cnn_model:
         #self.lr = lr
         #self.maxlen = maxlen
         #self.num_words = num_words
-        version = '2.0'
+
         sep_val = 'separate validation data'
         print('='*75)
-        print('cnn_model version: {}'.format(version))
+        print('cnn_model version: {}'.format(self.version))
         print('Detected labels:   {}'.format(self.classes))
 
         if self.test_split == 0:
@@ -297,7 +364,7 @@ class cnn_model:
         else:
             print('test_split:        {}'.format(self.test_split))
 
-        print('num_words:         {}'.format(self.num_words))
+        print('vocab_size:         {}'.format(self.vocab_size))
         print('maxlen:            {}'.format(self.maxlen))
         print('Learning_Rate(lr): {}'.format(self.lr))
         print('numbers of filter: {}'.format(self.filter_num))
@@ -358,13 +425,14 @@ class cnn_model:
 
 
 
-    def plot_matrix(self, normalize=True, size=(6,6)):
+    def plot_matrix(self, normalize=True, size=(6,6), title=None):
         size = size
         normalize = normalize
-        if self.test_split == 0:
-            title = 'separate validation data set'
-        else:
-            title = "Test set(" + str(self.test_split) + ")"
+        if title == None:
+            if self.test_split == 0:
+                title = 'separate validation data set'
+            else:
+                title = "Test set(" + str(self.test_split) + ")"
         true_labels = [np.where(r==1)[0][0] for r in self.y_test]
         predictions = self.model.predict_classes(self.X_test, verbose=0)
         cnn_model.plot_confusion_matrix(true_labels, predictions, classes=self.classes, normalize=normalize, size=size, title=title)
@@ -373,15 +441,20 @@ class cnn_model:
 class binary_model:
 
     def __init__(self, df=None, text=None, label=None, test_split=0.10, lr=0.005,
-                 num_words=2000, maxlen='maxlen', embedding_dim=50, dense_nodes=None, tb_dir=None, loss_func_index=2):
+                 num_words=10000, maxlen='maxlen', embedding_dim=50, dense_nodes=None,
+                 tb_dir=None, loss_func_index=2, pre_trained_EM=None, test_df=None, speed_up=False):
 
         if isinstance(df, pd.DataFrame) and text!=None and label!=None:
+
+            self.version = '2.5'
 
             self.df = df
             self.text = text #column name for text
             self.label = label #column name for label
             self.test_split = test_split
             self.classes = np.unique(df[label].values)
+
+            pre_train = False
 
             self.lr = lr
             self.maxlen = maxlen
@@ -400,17 +473,44 @@ class binary_model:
             encoder = LabelBinarizer()
             y = encoder.fit_transform(df[label].values)
 
+            if test_df == None:
+                # train test split & tokenization
+                self.sentences_train, self.sentences_test, self.y_train, self.y_test = train_test_split(
+                   sentences, y, test_size=self.test_split, random_state=42)
+                self.tokenizer = Tokenizer(num_words=self.num_words)
+                self.tokenizer.fit_on_texts(self.sentences_train)
+                self.X_train = self.tokenizer.texts_to_sequences(self.sentences_train)
+                self.X_test = self.tokenizer.texts_to_sequences(self.sentences_test)
+                #vocab_size = len(self.tokenizer.word_index) + 1
+            else:
+                '''
+                if user pass in a separate validation data set
+                format: test_df = [df, text, label]
+                '''
+                # over write test_split -> 0
+                self.test_split = 0
 
-            # train test split & tokenization
-            self.sentences_train, self.sentences_test, self.y_train, self.y_test = train_test_split(
-               sentences, y, test_size=self.test_split, random_state=42)
-            self.tokenizer = Tokenizer(num_words=self.num_words)
-            self.tokenizer.fit_on_texts(self.sentences_train)
-            self.X_train = self.tokenizer.texts_to_sequences(self.sentences_train)
-            self.X_test = self.tokenizer.texts_to_sequences(self.sentences_test)
-            #vocab_size = len(self.tokenizer.word_index) + 1
+                valid_df = test_df[0]
+                self.valid_text = test_df[1]
+                self.valid_label = test_df[2]
+                self.test_label = np.unique(valid_df[self.valid_label].values)
+                if not np.array_equal(self.classes, self.test_label):
+                    print('Detected labels:')
+                    print('training set: {}'.format(self.classes))
+                    print('testing set:  {}'.format(np.unique(valid_df[self.valid_label].values)))
+                    raise Exception('label not match')
 
-            vocab_size = len(self.tokenizer.word_index) + 1
+                self.sentences_train = sentences
+                self.y_train = y
+                self.sentences_test = valid_df[self.valid_text].values
+                self.y_test = encoder.fit_transform(valid_df[self.valid_label].values)
+                self.tokenizer = Tokenizer(num_words=self.num_words)
+                self.tokenizer.fit_on_texts(self.sentences_train)
+                self.X_train = self.tokenizer.texts_to_sequences(self.sentences_train)
+                self.X_test = self.tokenizer.texts_to_sequences(self.sentences_test)
+
+            self.vocab_size = len(self.tokenizer.word_index) + 1
+
 
             maxlen_op = ['maxlen','mid','mean']
             #print(type(maxlen))
@@ -435,6 +535,26 @@ class binary_model:
             self.X_train = pad_sequences(self.X_train, padding='post', maxlen=self.maxlen)
             self.X_test = pad_sequences(self.X_test, padding='post', maxlen=self.maxlen)
 
+            # set pre trained embeddings
+            if isinstance(pre_trained_EM, dict):
+                # over write vocab_size
+                # set pre_train = True
+                NB_WORDS = len(pre_trained_EM)
+                self.vocab_size = NB_WORDS
+                pre_train = True
+
+                missing_w = 0
+                emb_matrix = np.zeros((NB_WORDS, embedding_dim))
+                for w, i in self.tokenizer.word_index.items():
+                    if i < NB_WORDS:
+                        vect = pre_trained_EM.get(w)
+                        if vect is not None:
+                            emb_matrix[i] = vect
+                        else:
+                            missing_w += 1
+                    else:
+                        break
+
             '''
             Hyperparameter
             1. embedding_dim
@@ -448,16 +568,29 @@ class binary_model:
             self.output_num = self.y_train.shape[1]
 
             if dense_nodes == None:
-                self.dense_nodes = 30
+                self.dense_nodes = self.output_num * 10
             else:
                 self.dense_nodes = dense_nodes
 
-            self.loss_func = ['mean_squared_error', 'logcosh', 'mean_absolute_error']
+            self.loss_func = ['mean_squared_error', 'logcosh', 'mean_absolute_error', 'categorical_crossentropy']
 
             model = Sequential()
-            model.add(layers.Embedding(vocab_size, self.embedding_dim, input_length=self.maxlen))
+            #model.add(layers.Embedding(vocab_size, self.embedding_dim, input_length=self.maxlen))
+            if pre_train:
+                model.add(layers.Embedding(self.vocab_size, self.embedding_dim, input_length=self.maxlen, trainable=False))
+                model.layers[0].set_weights([emb_matrix])
+            else:
+                model.add(layers.Embedding(self.vocab_size, self.embedding_dim, input_length=self.maxlen))
+
+            if speed_up:
+                model.add(layers.Conv1D(64, 5, activation='relu'))
+                model.add(layers.MaxPooling1D())
+                model.add(layers.Dropout(0.5))
+
+            #dropout=0.2, recurrent_dropout=0.2
+            model.add(layers.LSTM(self.dense_nodes, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))
             model.add(layers.Flatten())
-            model.add(layers.Dense(self.dense_nodes, activation='relu'))
+            #model.add(layers.Dense(self.dense_nodes, activation='relu'))
             model.add(layers.Dense(self.output_num, activation='sigmoid'))
 
             adam = Adam(lr=self.lr, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
@@ -527,20 +660,6 @@ class binary_model:
         print("model saved:  {}".format(name))
 
 
-    def load_pkl(self, name):
-        print("---------------------")
-        print("loading")
-        try:
-            with open(name, 'rb') as obj:
-                x = pickle.load(obj)
-
-            print("---------------------")
-            print("{} load".format(name))
-            return x
-        except:
-            print("Model not found")
-
-
 
     def predict(self, text):
         text = self.tokenizer.texts_to_sequences(text)
@@ -556,7 +675,7 @@ class binary_model:
         return predict
 
 
-    def predict_topk(self, text, topk=3):
+    def predict_topk(self, text, topk=2):
         text = self.tokenizer.texts_to_sequences(text)
         text = pad_sequences(text, padding='post', maxlen=self.maxlen)
         predictions = self.model.predict(text, verbose=0)
@@ -584,16 +703,22 @@ class binary_model:
         #self.lr = lr
         #self.maxlen = maxlen
         #self.num_words = num_words
-        version = '1.0'
-        print('Binary Model version: {}'.format(version))
-        print('='*65)
+        sep_val = 'separate validation data'
+        print('Binary Model version: {}'.format(self.version))
+        print('='*75)
         print('Detected labels:   {}'.format(self.classes))
-        print('test_split:        {}'.format(self.test_split))
-        print('num_words:         {}'.format(self.num_words))
+        #print('test_split:        {}'.format(self.test_split))
+        if self.test_split == 0:
+            print('test_split:        {}'.format(sep_val))
+            print('valid data labels: {}'.format(self.test_label))
+        else:
+            print('test_split:        {}'.format(self.test_split))
+
+        print('num_words:         {}'.format(self.vocab_size))
         print('maxlen:            {}'.format(self.maxlen))
         print('Learning_Rate(lr): {}'.format(self.lr))
         print('loss function:     {}'.format(self.loss_func[self.loss_func_index]))
-        print('='*65)
+        print('='*75)
         print('Binary Model: ')
         self.model.summary()
 
@@ -649,7 +774,8 @@ class binary_model:
 
 
 
-    def plot_matrix(self, normalize=True, size=(6,5)):
+    def plot_matrix(self, normalize=True, size=(6,5), title=None):
+        '''
         size = size
         normalize = normalize
         title = "Test set(" + str(self.test_split) + ")"
@@ -658,3 +784,111 @@ class binary_model:
         true_labels = self.y_test
         predictions = self.model.predict_classes(self.X_test, verbose=0)
         cnn_model.plot_confusion_matrix(true_labels, predictions, classes=self.classes, normalize=normalize, size=size, title=title)
+        '''
+        size = size
+        normalize = normalize
+        if title == None:
+            if self.test_split == 0:
+                title = 'separate validation data set'
+            else:
+                title = "Test set(" + str(self.test_split) + ")"
+        true_labels = [np.where(r==1)[0][0] for r in self.y_test]
+        predictions = self.model.predict_classes(self.X_test, verbose=0)
+        cnn_model.plot_confusion_matrix(true_labels, predictions, classes=self.classes, normalize=normalize, size=size, title=title)
+
+
+
+
+
+# ============================== helper functions ==============================
+'''
+functions:
+1. save_obj
+2. load_pkl
+3. glove_to_dict
+4. crawl_to_dict
+5. oversampling
+'''
+
+
+# save an object
+def save_obj(obj, name):
+    name = name + '.pkl'
+    with open(name, 'wb') as output:  # Overwrites any existing file.
+        pickle.dump(obj, output, pickle.HIGHEST_PROTOCOL)
+
+    print("object saved:  {}".format(name))
+
+
+#load a cnn class or any pkl object
+def load_pkl(name):
+    print("---------------------")
+    print("loading")
+    try:
+        with open(name, 'rb') as obj:
+            x = pickle.load(obj)
+
+        print("---------------------")
+        print("{} load".format(name))
+        return x
+    except:
+        print("file not found")
+
+
+# read a glove pre trained embeddings txt file
+# and return a dictionary of word vectors
+def glove_to_dict(path, dim):
+    skip = 0
+    glove_file = path
+    emb_dict = {}
+    glove = open(glove_file, encoding='utf-8')
+    print('loading pre_trained Embeddings...\nfrom: {}'.format(path))
+    for line in glove:
+        values = line.split()
+        word = values[0]
+        try:
+            vector = np.asarray(values[1:], dtype='float32')
+            if len(vector) != dim:
+                raise Exception()
+        except:
+            skip += 1
+            continue
+        emb_dict[word] = vector
+    glove.close()
+    print('{}\npre_trained Embeddings loaded'.format(35*'='))
+    print('invalid word vectors: {}'.format(skip))
+
+    return emb_dict
+
+
+# load a crawl vec file
+# return a dict
+def crawl_to_dict(fname):
+    print('loading crawl Embeddings...\nfrom: {}'.format(fname))
+    fin = io.open(fname, 'r', encoding='utf-8', newline='\n', errors='ignore')
+    n, d = map(int, fin.readline().split())
+    data = {}
+    #print('vector file -> dict...')
+    for line in fin:
+        tokens = line.rstrip().split(' ')
+        data[tokens[0]] = map(float, tokens[1:])
+
+    print('map object  -> numpy array...')
+    for key in data.keys():
+        data[key] = np.asarray(list(data.get(key)))
+
+    print('{}\npre_trained Embeddings loaded'.format(35*'='))
+    return data
+
+
+
+def oversampling(df, label, max_size=1000):
+    print('oversampling to {}'.format(max_size))
+    temp_df = df
+    #max_size = 1000
+    lst_two = [temp_df]
+    for class_index, group in temp_df.groupby(label):
+        lst_two.append(group.sample(max_size-len(group), replace=True))
+    balance_df = pd.concat(lst_two)
+
+    return balance_df
