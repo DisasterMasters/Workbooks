@@ -1,3 +1,3 @@
 # nn.py
-- keras_model
-- helper functions
+1. keras_model
+2. helper functions
