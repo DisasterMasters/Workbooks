@@ -1,27 +1,22 @@
 
 # nn model
 # Zhenning Yang
-# Last modified: 07/27/2019
+# Last modified: 08/08/2019
 
 '''
 Update Note:
     model:
-        1. combine cnn_model & binary_model --> model
-        2. fix y_test - used transform() instead of fit_transform()
-        3. fix separate val/test in train function
-        4. move plot_confusion_matrix outside of the class.
-        5. maxlen --> maxlen no mid, mean... pass in a number or use default maxlen
-        6.
+        1. fixed predict_topk for binary classification
 
     helper functions:
-        1. added plot_confusion_matrix
-        2. add eval
+        1. added get_sub_class_df
+        2. added downsampling
 
 TO_DO:
-    1. test
+    1. add slim-bert to nn model
 
 PS:
-    1. might need cite the source when using crawl_embeddings
+    1. might need to cite the source when using crawl_embeddings
 '''
 
 #
@@ -59,6 +54,7 @@ from sklearn.preprocessing import LabelBinarizer
 from sklearn.utils.multiclass import unique_labels
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_score
+from sklearn.utils import class_weight
 
 from time import time
 import tensorflow as tf
@@ -67,17 +63,22 @@ from tensorflow.python.keras.callbacks import TensorBoard
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+try:
+    from keras_self_attention import SeqSelfAttention
+except:
+    pass
+
 #a = 10
-loss_functions = ['mean_squared_error', 'logcosh', 'mean_absolute_error', 'categorical_crossentropy']
+loss_functions = ['mean_squared_error', 'logcosh', 'mean_absolute_error', 'categorical_crossentropy', 'binary_crossentropy']
 act = ['sigmoid', 'softmax']
 opt = ['sgd', 'adam']
 
-class model:
+class keras_model:
 
     def __init__(self, df=None, text=None, label=None, test_split=0.10, lr=0.01,
                  num_words=10000, embedding_dim=50, dense_nodes=None, maxlen=None,
                  tb_dir=None, loss_func='categorical_crossentropy', pre_trained_EM=None,
-                 test_df=None, cnn=False, act='softmax', lstm=True, opt='adam'):
+                 test_df=None, cnn=False, act='softmax', lstm=True, opt='adam', drop=False):
 
         '''
         num_words: is the max limit of words
@@ -91,7 +92,7 @@ class model:
 
             #print('var that outside the class: {}'.format(a))
 
-            self.version = '5.0'
+            self.version = '6.0'
 
             self.df = df
             self.text = text #column name for text
@@ -108,8 +109,8 @@ class model:
             self.labels_not_match = False
 
             self.loss_func = loss_func
-            if (len(self.classes) <= 2) and (self.loss_func=='categorical_crossentropy'):
-                self.loss_func = 'mean_absolute_error'
+            if (len(self.classes) == 2) and (self.loss_func=='categorical_crossentropy'):
+                self.loss_func = 'binary_crossentropy'
 
             #visualization on TensorBoard
             self.tb_dir = tb_dir
@@ -220,6 +221,13 @@ class model:
 
             #self.loss_func = ['mean_squared_error', 'logcosh', 'mean_absolute_error', 'categorical_crossentropy']
 
+            '''
+            1. em-de-de-output
+            2. em-lstm-output
+            3. em-cnn-de-output
+            4. em-cnn-lstm-output
+            5. note: an extra dropout layer can be added
+            '''
             model = Sequential()
             #model.add(layers.Embedding(vocab_size, self.embedding_dim, input_length=self.maxlen))
             if pre_train:
@@ -229,37 +237,63 @@ class model:
                 model.add(layers.Embedding(self.vocab_size, self.embedding_dim, input_length=self.maxlen))
 
             if cnn:
-                model.add(layers.Conv1D(128, 5, activation='relu'))
-                model.add(layers.MaxPooling1D())
+                model.add(layers.Conv1D(128, 5, activation='relu', padding='same'))
+                #model.add(layers.MaxPooling1D())
+                if not lstm:
+                    model.add(layers.MaxPooling1D())
+                    model.add(layers.Dropout(0.3))
             if lstm:
                 model.add(layers.LSTM(self.dense_nodes, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))
 
             model.add(layers.Flatten())
+
+            if drop:
+                model.add(layers.Dropout(0.5))
 
             if (cnn and not lstm) or (not cnn and not lstm):
                 model.add(layers.Dense(self.dense_nodes, activation='relu'))
 
             model.add(layers.Dense(self.output_num, activation=act))
 
+            '''
             sgd = SGD(lr=self.lr, momentum=0.9, decay=0.0, nesterov=False)
             adam = Adam(lr=self.lr, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
             if self.opt == 'sgd':
                 model.compile(loss=self.loss_func, optimizer=sgd, metrics=['accuracy'])
             else:
+                self.opt = 'adam'
                 model.compile(loss=self.loss_func, optimizer=adam, metrics=['accuracy'])
 
+            '''
             self.model = model
             #self.model.summary()
         else:
             print("please load a model")
 
 
-    def train(self, epochs=8, verbose=1, shuffle=True, batch_size=50, tb_name=time()):
+    def train(self, epochs=8, verbose=1, shuffle=True, batch_size=50, tb_name=time(), class_weight=None, opt=None, lr=None):
 
         '''
         self.epochs = epochs
         self.batch_size = batch_size
         '''
+        if opt==None:
+            opt=self.opt
+        else:
+            self.opt = opt
+
+        if lr==None:
+            lr=self.lr
+        else:
+            self.lr = lr
+
+        sgd = SGD(lr=self.lr, momentum=0.9, decay=0.0, nesterov=False)
+        adam = Adam(lr=self.lr, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
+        if self.opt == 'sgd':
+            self.model.compile(loss=self.loss_func, optimizer=sgd, metrics=['accuracy'])
+        else:
+            self.opt = 'adam'
+            self.model.compile(loss=self.loss_func, optimizer=adam, metrics=['accuracy'])
 
         val_data = None
         callback = None
@@ -275,7 +309,7 @@ class model:
                     epochs=epochs,
                     verbose=verbose,
                     validation_data=val_data,
-                    shuffle=shuffle, batch_size=batch_size, callbacks=callback)
+                    shuffle=shuffle, batch_size=batch_size, callbacks=callback, class_weight=class_weight)
 
         loss, accuracy = self.model.evaluate(self.X_train, self.y_train, verbose=False)
         print("Training Accuracy: {:.4f}".format(accuracy))
@@ -347,15 +381,26 @@ class model:
         text = pad_sequences(text, padding='post', maxlen=self.maxlen)
         predictions = self.model.predict(text, verbose=0)
         topk_list = []
-        for index in range(predictions.shape[0]):
-            temp = []
-            top = sorted(range(len(predictions[index])), key=lambda i: predictions[index][i], reverse=True)[:topk]
-            #print('-'*20)
-            for x in range(len(top)):
-                temp.append([self.classes[top[x]], predictions[index][top[x]]])
-                #print('{:3f} : {}'.format(predictions[index][top[x]], labels[top[x]]))
 
-            topk_list.append(temp)
+        if len(self.classes) == 2:
+            #temp = []
+            for val in predictions:
+                if val[0] < .5:
+                    #print(val)
+                    topk_list.append([self.classes[0], val[0]])
+                else:
+                    topk_list.append([self.classes[1], val[0]])
+                #topk_list = temp
+        else:
+            for index in range(predictions.shape[0]):
+                temp = []
+                top = sorted(range(len(predictions[index])), key=lambda i: predictions[index][i], reverse=True)[:topk]
+                #print('-'*20)
+                for x in range(len(top)):
+                    temp.append([self.classes[top[x]], predictions[index][top[x]]])
+                    #print('{:3f} : {}'.format(predictions[index][top[x]], labels[top[x]]))
+
+                topk_list.append(temp)
 
         return topk_list
 
@@ -371,7 +416,7 @@ class model:
         #self.maxlen = maxlen
         #self.num_words = num_words
         sep_val = 'separate validation data'
-        print('Binary Model version: {}'.format(self.version))
+        print('Model version: {}'.format(self.version))
         print('='*75)
         print('Detected labels:   {}'.format(self.classes))
         #print('test_split:        {}'.format(self.test_split))
@@ -386,7 +431,7 @@ class model:
         print('Learning_Rate(lr): {}'.format(self.lr))
         print('loss function:     {}'.format(self.loss_func))
         print('='*75)
-        print('Binary Model: ')
+        #print('Binary Model: ')
         self.model.summary()
 
 
@@ -430,6 +475,9 @@ functions:
 5. oversampling
 6. plot_confusion_matrix
 7. eval
+8. get_sub_class_df
+9. downsampling
+10. get_class_weight
 '''
 
 
@@ -575,3 +623,68 @@ def eval(y_true, pred, average='binary'):
     dict['precision'] = precision_score(y_true, pred, average=average)
 
     return dict
+
+
+
+# get a df with sub classes and all other classes labeled as -1/
+# for building sub models
+# sub_class is a list of labels
+# code_label is the name of the column in DataFrame
+# return a new df
+def get_sub_class_df(df, sub_class, code_label, label=-1):
+    labels = np.unique(df[code_label])
+    temp = df.copy()
+    for val in labels:
+        if val not in sub_class:
+            temp.replace({code_label: {val:label}}, inplace=True)
+
+    return temp
+
+
+# downsampling
+# num: min number. default is the number of the smallest classes
+# down_label: default apply downsample to all classes. (Optional: pass in a list of classes)
+# return a new df
+def downsampling(df, code_label, num=None, down_label=None):
+    frame = []
+    labels = np.unique(df[code_label])
+    min_num = min(df[code_label].value_counts())
+
+    def get_sample(frame, df, code_label, val, num, min_num):
+        try:
+            frame.append(df[df[code_label]==val].sample(num))
+        except:
+            frame.append(df[df[code_label]==val].sample(min_num))
+
+        return frame
+
+    if num == None:
+        num = min_num
+
+    if down_label == None:
+        for val in labels:
+            frame = get_sample(frame, df, code_label, val, num, min_num)
+    else:
+        for l in down_label:
+            try:
+                frame = get_sample(frame, df, code_label, l, num, min_num)
+            except:
+                pass
+
+        for x in labels:
+            if x not in down_label:
+                frame.append(df[df[code_label]==x])
+
+    temp = pd.concat(frame)
+    return temp
+
+
+# get class weights, based on the distribution of each classes in data
+def get_class_weight(df, code_label):
+    labels = np.unique(df[code_label])
+    class_weights = class_weight.compute_class_weight('balanced', np.unique(df[code_label]), df[code_label])
+    class_weights_dict = {}
+    for i in range(len(class_weights)):
+        class_weights_dict[labels[i]] = class_weights[i]
+
+    return class_weights_dict
