@@ -78,7 +78,7 @@ class keras_model:
     def __init__(self, df=None, text=None, label=None, test_split=0.10, lr=0.01,
                  num_words=10000, embedding_dim=50, dense_nodes=None, maxlen=None,
                  tb_dir=None, loss_func='categorical_crossentropy', pre_trained_EM=None,
-                 test_df=None, cnn=False, act='softmax', lstm=True, opt='adam', drop=False):
+                 test_df=None, cnn=False, act='softmax', lstm=True, opt='adam', drop=False, slim_bert=False):
 
         '''
         num_words: is the max limit of words
@@ -236,23 +236,33 @@ class keras_model:
             else:
                 model.add(layers.Embedding(self.vocab_size, self.embedding_dim, input_length=self.maxlen))
 
-            if cnn:
-                model.add(layers.Conv1D(128, 5, activation='relu', padding='same'))
-                #model.add(layers.MaxPooling1D())
-                if not lstm:
-                    model.add(layers.MaxPooling1D())
-                    model.add(layers.Dropout(0.3))
-            if lstm:
-                model.add(layers.LSTM(self.dense_nodes, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))
+            '''
+            adding layers to Sequential model
+            '''
+            if slim_bert:
+                model.add(layers.Bidirectional(layers.LSTM(128, return_sequences=True, dropout=0.2, recurrent_dropout=0.2)))
+                model.add(SeqSelfAttention(attention_activation='sigmoid'))
+                model.add(layers.Flatten())
+            else:
+                if cnn:
+                    model.add(layers.Conv1D(128, 5, activation='relu', padding='same'))
+                    #model.add(layers.MaxPooling1D())
+                    if not lstm:
+                        model.add(layers.MaxPooling1D())
+                        model.add(layers.Dropout(0.3))
+                if lstm:
+                    model.add(layers.LSTM(self.dense_nodes, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))
 
-            model.add(layers.Flatten())
+                model.add(layers.Flatten())
 
-            if drop:
-                model.add(layers.Dropout(0.5))
+                if drop:
+                    model.add(layers.Dropout(0.5))
 
-            if (cnn and not lstm) or (not cnn and not lstm):
-                model.add(layers.Dense(self.dense_nodes, activation='relu'))
-
+                if (cnn and not lstm) or (not cnn and not lstm):
+                    model.add(layers.Dense(self.dense_nodes, activation='relu'))
+            '''
+            add a output Dense layer to model
+            '''
             model.add(layers.Dense(self.output_num, activation=act))
 
             '''
@@ -681,10 +691,10 @@ def downsampling(df, code_label, num=None, down_label=None):
 
 # get class weights, based on the distribution of each classes in data
 def get_class_weight(df, code_label):
-    labels = np.unique(df[code_label])
+    #labels = np.unique(df[code_label])
     class_weights = class_weight.compute_class_weight('balanced', np.unique(df[code_label]), df[code_label])
     class_weights_dict = {}
     for i in range(len(class_weights)):
-        class_weights_dict[labels[i]] = class_weights[i]
+        class_weights_dict[i] = class_weights[i]
 
     return class_weights_dict
