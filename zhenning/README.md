@@ -18,10 +18,10 @@
     - get_class_weight()
 
 # Packages
-```
-pip install keras 
-```
+    ```
+    pip install keras 
+    ```
 ### Self Attention based RNN "slim-bert"
-```
-pip install keras-self-attention
-```
+    ```
+    pip install keras-self-attention
+    ```
