@@ -36,7 +36,7 @@ from nn import keras_model
 # default LSTM 
 model = keras_model(dataFrame, text_col, label_col)
 
-# check model information ()
+# check model information
 model.infor()
 
 # train
