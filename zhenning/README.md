@@ -36,7 +36,6 @@ from nn import keras_model
 # default LSTM 
 model = keras_model(dataFrame, text_col, label_col)
 ```
-
 ```
 # check model information
 model.infor()
@@ -65,7 +64,6 @@ model.infor()
     Non-trainable params: 0
     _________________________________________________________________
 ```
-
 ```
 # train
 model.train(batch_size=50, epochs=8)
@@ -75,12 +73,13 @@ model.train(batch_size=50, epochs=8)
     0.5348
 
 ```
+```
 # plot history & confusion matrix
 model.plot_history()
 
 model.plot_matrix(size=(6,5))
 ```
-
+```
 # predit
 model.predict(['How are you doing?', 'pass in a list of texts'])
 --> [13, 13]
