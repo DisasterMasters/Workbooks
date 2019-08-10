@@ -35,4 +35,15 @@ from nn import keras_model
 
 # default LSTM 
 model = keras_model(dataFrame, text_col, label_col)
+
+# check model information ()
+model.infor()
+
+# train
+model.train(batch_size=50, epochs=8)
+
+# plot history & confusion matrix
+model.plot_history()
+
+model.plot_matrix(size=(6,5))
 ```
