@@ -2,9 +2,11 @@
 - keras_model
     - Feedforward Neural Network (FFNN)
     - Convolutional Neural Networks (CNN)
+    - Attention model
     - Recurrent Neural Network (RNN)
-        - LSTM
+        - LSTM (Default setting)
         - Self Attention based RNN
+    - CNN + LSTM (Testing)
 - Help functions
     - save_obj()
     - load_pkl()
