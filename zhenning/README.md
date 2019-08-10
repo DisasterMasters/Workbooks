@@ -17,11 +17,20 @@
     - downsampling()
     - get_class_weight()
 
-# Packages
+# Install
 ```
 pip install keras 
 ```
 ### Self Attention based RNN "slim-bert"
 ```
 pip install keras-self-attention
+```
+
+# Usage
+```
+import nn
+from nn import keras_model
+
+# default LSTM 
+model = keras_model(dataFrame, text_col, label_col)
 ```
