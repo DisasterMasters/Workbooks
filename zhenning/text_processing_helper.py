@@ -41,6 +41,13 @@ def search_phase(text, phase):
     text = text.lower()
     phase = phase.lower()
     index = text.find(phase)
+    try:
+        # not t.isalnum()
+        temp = text[index+len(phase)]
+        if temp.isalnum() or text[index-1].isalnum():
+            return -1
+    except:
+        pass
     return index
 
 
