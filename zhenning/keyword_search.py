@@ -155,7 +155,7 @@ with pd.ExcelWriter("keyword_search_samples/{}/keyword_search_{}_sample.xlsx".fo
         temp_df = pd.DataFrame()
         for i in d[k]:
             text_temp.append(texts[i])
-        temp_df['Text'] = text_temp
+        temp_df['Text'] = list(set(text_temp))
         temp_df.to_excel(writer, sheet_name='{}'.format(k))
         
 # Graphing
